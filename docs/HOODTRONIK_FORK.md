@@ -34,6 +34,12 @@ tool-count test, `npm run build`. The MCP client picks up new TS tools after an 
 
 ## Learned live (2026-10-24, newest first)
 
+- **"Unsaved project data found ... update your project?" (OK/Cancel) at startup = crash-recovery data** left by
+  force-killing CC5. Cancel -> CC5 EXITED ~20 s later and the box came back next launch. OK -> a Windows Save As
+  (.ccRestore, junk name pre-filled) -> saving it clears the recovery. The file-name box is not reachable via UIA
+  ValuePattern; Win32 works: EnumChildWindows -> the Edit whose parent is a ComboBox -> WM_SETTEXT full path ->
+  GetDlgItem(dlg, 1) BM_CLICK. Avoid the whole thing: stop CC5 cleanly instead of Stop-Process when possible.
+
 - **Preview Camera cannot be aimed from Python on 5.05.** No `ECameraLocationType_*`/`SetCameraLocation`
   (so upstream `frame_camera` always fails), `GetControl("Transform")` and every `GetDataBlock` key return None,
   and `AlignTo(helper prop, any EAlignAxis)` returns Failure. Loading a `.ccCam` preset DOES move it (it replaces
