@@ -15,6 +15,16 @@ npm run build && npx vitest run      # TS layer
 The plugin is installed as a junction: `C:\Program Files\Reallusion\Character Creator 5\Bin64\OpenPlugin\CC5_MCP_Bridge`
 -> `cc5-plugin/` here (`install-plugin.ps1`, one UAC prompt). Repo edits are what CC5 loads.
 
+## Eyes (see what is blocking CC5)
+
+`python scripts/cc5_live_eyes.py` (run under a stream monitor) = live page http://127.0.0.1:8768 + EVENT lines:
+popup_opened {texts, buttons, png}, hung/responsive, bridge_up/bridge_down, view_changed/still/blank.
+`python scripts/cc5_live_eyes.py state` = one status line. Frames in `%TEMP%/cc5_live_eyes/` (latest.png = whole CC5 UI).
+Wraps mc-iclone8-mcp/scripts/iclone_live_eyes.py (out of process, keeps working when CC5 is frozen).
+Measured 2026-10-24: with CC5's "Unsaved project data found ... update your project?" box open, bridge commands
+still run (Qt modal loop keeps the plugin's QTimer alive); the startup "Failed to establish a connection" box,
+by contrast, stops the plugin from starting at all.
+
 ## Adding a tool (no CC5 restart)
 
 Put the function in `cc5-plugin/cc5_api.py` and register it in `EXTRA_ACTIONS` + `EXTRA_GET_ROUTES` /
