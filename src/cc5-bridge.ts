@@ -494,6 +494,15 @@ export class CC5Bridge {
     });
   }
 
+  // CLAUDE-NOTE (2026-10-24, hoodtronik fork): routes served from cc5_api.EXTRA_* (hot-reloadable).
+  async contentFolders(folderType: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/content/folders", "POST", { folder_type: folderType });
+  }
+
+  async cameraPreset(view: string, body: string): Promise<{ success: boolean; preset?: string; error?: string }> {
+    return this.request("/camera/preset", "POST", { view, body });
+  }
+
   // --- Convenience Color Shortcuts (Tier 3) ---
 
   async setEyeColor(r: number, g: number, b: number): Promise<ColorResult> {

@@ -37,8 +37,21 @@ export function registerCameraTools(server: McpServer, bridge: CC5Bridge) {
   );
 
   server.tool(
+    "camera_preset",
+    "Head close-up that works on CC5 5.05: applies a shipped Headshot Ref camera preset (profile view of the head). view face_left|face_right; body base|male|female picks the preset tuned to that body. Follow with capture_viewport. A full-body view returns after loading a new avatar.",
+    {
+      view: z.enum(["face_left", "face_right"]).default("face_left"),
+      body: z.enum(["base", "male", "female"]).default("base"),
+    },
+    async ({ view, body }) => bridgeCall(
+      () => bridge.cameraPreset(view, body),
+      (result) => result.success ? `Camera preset applied: ${result.preset}` : `Failed: ${result.error}`,
+    )
+  );
+
+  server.tool(
     "frame_camera",
-    "Move the viewport camera to a preset view. Use 'face' to frame the head close-up (so eye/lip/skin color and facial morphs are actually visible in capture_viewport — a full-body shot is too small), 'home'/'all' to reset to the whole character, or front/back/left/right/top/bottom/focus.",
+    "Move the viewport camera to a preset view. NOTE: on CC5 5.05 these presets are unavailable (no ECameraLocationType); use camera_preset for head close-ups. Use 'face' to frame the head close-up (so eye/lip/skin color and facial morphs are actually visible in capture_viewport — a full-body shot is too small), 'home'/'all' to reset to the whole character, or front/back/left/right/top/bottom/focus.",
     {
       view: z.enum(["face", "front", "back", "left", "right", "top", "bottom", "home", "all", "focus"])
         .default("face").describe("Preset view. 'face' = head close-up, 'home'/'all' = whole body."),

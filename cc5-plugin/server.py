@@ -159,7 +159,9 @@ ACTION_MAP: dict[str, Any] = {
     "list_hair":             lambda p: cc5_api.list_hair(),
     "list_accessories":      lambda p: cc5_api.list_accessories(),
     "remove_scene_item":     lambda p: cc5_api.remove_scene_item(p["item_name"]),
-    "browse_content":        lambda p: cc5_api.browse_content(p.get("folder_type", "cloth_upper")),
+    "browse_content":        lambda p: cc5_api.browse_content(p.get("folder_type", "cloth_upper"),
+                                                          int(p.get("max_depth", 4)), int(p.get("max_results", 500))),
+    "content_folders":       lambda p: cc5_api.content_folders(str(p["folder_type"])),
     # Tier 3: Convenience Color Shortcuts
     "set_eye_color":         lambda p: cc5_api.set_eye_color(float(p["r"]), float(p["g"]), float(p["b"])),
     "set_hair_color":        lambda p: cc5_api.set_hair_color(float(p["r"]), float(p["g"]), float(p["b"])),
@@ -226,6 +228,7 @@ POST_ROUTES: dict[str, str] = {
     # Tier 1: Content Management
     "/item/remove":      "remove_scene_item",
     "/content/browse":   "browse_content",
+    "/content/folders":  "content_folders",
     # Tier 3: Convenience Color Shortcuts
     "/color/eye":        "set_eye_color",
     "/color/hair":       "set_hair_color",
@@ -284,7 +287,9 @@ def process_command_queue() -> None:
             params = cmd["params"]
 
             try:
-                handler = ACTION_MAP.get(action)
+                # CLAUDE-NOTE (2026-10-24): fall back to cc5_api.EXTRA_ACTIONS so tools added in cc5_api.py
+                # go live via /reload (cc5_api only) instead of a ~3 min CC5 restart.
+                handler = ACTION_MAP.get(action) or getattr(cc5_api, "EXTRA_ACTIONS", {}).get(action)
                 result = handler(params) if handler else {"success": False, "error": f"Unknown action: {action}"}
             except Exception as e:
                 print(f"[CC5 MCP Bridge] Action '{action}' failed: {traceback.format_exc()}")
@@ -436,7 +441,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(status, {"result": result})
             return
 
-        action = GET_ROUTES.get(path)
+        action = GET_ROUTES.get(path) or getattr(cc5_api, "EXTRA_GET_ROUTES", {}).get(path)
         if action:
             status, data = _execute_sync(action, {})
             self._send_json(status, data)
@@ -452,7 +457,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(e)})
             return
 
-        action = POST_ROUTES.get(path)
+        action = POST_ROUTES.get(path) or getattr(cc5_api, "EXTRA_POST_ROUTES", {}).get(path)
         if action:
             if action == "exec_python" and not DEV_MODE and os.environ.get("CC5_ALLOW_EXEC", "").strip().lower() not in ("1", "true", "yes"):
                 self._send_json(403, {"error": "/exec/python disabled. Set CC5_DEV_MODE=1 or CC5_ALLOW_EXEC=1."})

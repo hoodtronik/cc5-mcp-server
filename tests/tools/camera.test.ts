@@ -26,8 +26,17 @@ beforeEach(() => {
 // ── tool registration ─────────────────────────────────────────────────────────
 
 describe("registerCameraTools – registration", () => {
-  it("registers exactly 3 tools", () => {
-    expect(server.tool).toHaveBeenCalledTimes(3);
+  it("registers exactly 4 tools", () => {
+    expect(server.tool).toHaveBeenCalledTimes(4);
+  });
+
+  it("registers camera_preset", () => {
+    expect(server.tool).toHaveBeenCalledWith(
+      "camera_preset",
+      expect.any(String),
+      expect.any(Object),
+      expect.any(Function),
+    );
   });
 
   it("registers frame_camera", () => {

@@ -1905,7 +1905,68 @@ def remove_scene_item(item_name: str) -> dict[str, Any]:
     return {"success": False, "error": f"Item not found: {item_name}"}
 
 
-def browse_content(folder_type: str = "cloth_upper") -> list[str]:
+def _template_roots(folder_strs: list[str]) -> list[str]:
+    """Real disk roots behind CC5's virtual '$/' content tree."""
+    roots = [r for r in os.environ.get("CC5_CONTENT_ROOTS", "").split(";") if r]
+    # GetCustomContentFolder returns a real path ".../Reallusion Custom/<sub>"; its sibling
+    # ".../Reallusion Templates" holds the installed template library.
+    for fs in folder_strs:
+        norm = fs.replace("\\", "/")
+        if not norm.startswith("$") and "/Reallusion Custom/" in norm:
+            base = norm.split("/Reallusion Custom/")[0]
+            roots += [base + "/Reallusion Templates", base + "/Reallusion Custom"]
+    return list(dict.fromkeys(roots))
+
+
+def _browse_disk(folder_strs: list[str], max_depth: int, max_results: int) -> list[str]:
+    """CLAUDE-NOTE (2026-10-24): CC5 5.05 returns an EMPTY virtual '$/Cloth/...' tree even when
+    F:/iCLONE/Reallusion Templates/Cloth holds ~200 .ccCloth/.ccShoes files, so walk the disk.
+    Measured: $/Actor/Character lists different subfolders than the F: folder, i.e. '$' is a merged
+    view, not a plain alias of one root."""
+    subs = {fs.replace("\\", "/")[2:].strip("/") for fs in folder_strs if fs.startswith("$/")}
+    found: list[str] = []
+    for root in _template_roots(folder_strs):
+        for sub in subs:
+            top = os.path.join(root, sub)
+            if not os.path.isdir(top):
+                continue
+            base_depth = top.rstrip("/\\").count(os.sep) + top.count("/")
+            for dirpath, dirnames, filenames in os.walk(top):
+                if (dirpath.count(os.sep) + dirpath.count("/")) - base_depth >= max_depth:
+                    dirnames[:] = []
+                for fn in sorted(filenames):
+                    ext = os.path.splitext(fn)[1].lower()
+                    if ext.startswith(".cc") or ext.startswith(".i"):
+                        found.append(os.path.join(dirpath, fn).replace("\\", "/"))
+                        if len(found) >= max_results:
+                            return found
+    return found
+
+
+def content_folders(folder_type: str) -> dict[str, Any]:
+    """Diagnostic: the raw '$/...' folder strings CC5 resolves for a category, plus their
+    first-level subfolders and file counts. Use when browse_content returns nothing."""
+    enum = getattr(RLPy, "EContentRootFolder_" + folder_type, None)
+    if enum is None:
+        return {"success": False, "error": f"No EContentRootFolder_{folder_type} in this build"}
+    out: dict[str, Any] = {"success": True, "folder_type": folder_type}
+    for getter in ("GetDefaultContentFolder", "GetCustomContentFolder"):
+        try:
+            fs = getattr(RLPy.RApplication, getter)(enum)
+        except Exception as e:
+            out[getter] = {"error": str(e)}
+            continue
+        entry: dict[str, Any] = {"folder": fs}
+        try:
+            entry["files"] = len(RLPy.RApplication.GetContentFilesInFolder(fs) or [])
+            entry["subfolders"] = list(RLPy.RApplication.GetContentFoldersInFolder(fs) or [])[:30]
+        except Exception as e:
+            entry["error"] = str(e)
+        out[getter] = entry
+    return out
+
+
+def browse_content(folder_type: str = "cloth_upper", max_depth: int = 4, max_results: int = 500) -> list[str]:
     """Browse available content files by category. Returns file paths.
 
     CC5.1 API: RContentManager is gone. We resolve a '$/...' folder string via
@@ -1936,6 +1997,19 @@ def browse_content(folder_type: str = "cloth_upper") -> list[str]:
         "light": "EContentRootFolder_Light",
         "camera": "EContentRootFolder_Camera",
         "character": "EContentRootFolder_Character",
+        # CLAUDE-NOTE (2026-10-24): CC5 5.05 keeps garments under the top-level Cloth library
+        # (Coats/Shirts/Pants/...), not Actor/Upper+Lower (empty on this install). Enums verified
+        # present in the installed RLPy.py.
+        "coats": "EContentRootFolder_Coats",
+        "shirts": "EContentRootFolder_Shirts",
+        "pants": "EContentRootFolder_Pants",
+        "skirts": "EContentRootFolder_Skirts",
+        "gloves": "EContentRootFolder_Gloves",
+        "underwear": "EContentRootFolder_Underwear",
+        "cloth_others": "EContentRootFolder_ClothOthers",
+        "skin": "EContentRootFolder_FullSkin",
+        "persona": "EContentRootFolder_Persona",
+        "mixer_full_character": "EContentRootFolder_MixerPreset_FullCharacter",
     }
     folder_map: dict[str, Any] = {}
     for key, attr_name in enum_candidates.items():
@@ -1970,9 +2044,18 @@ def browse_content(folder_type: str = "cloth_upper") -> list[str]:
         # CC5.1 content files use .cc* extensions (e.g. .ccShoes, .ccCloth, .ccUpper);
         # legacy CC3/iClone content uses .i* (e.g. .iAvatar, .iShoe). Accept both.
         # (_ALLOWED_LOAD_EXTENSIONS is for load_asset and excludes .cc* content files.)
+        # CLAUDE-NOTE (2026-10-24): content packs live in SUBFOLDERS (e.g. Character/ActorCore,
+        # Character/Business); listing only the root found 3 of 110 characters. Walk breadth-first
+        # via GetContentFoldersInFolder (depth/count capped so a huge library stays responsive).
         results: list[str] = []
         seen: set[str] = set()
-        for fs in folder_strs:
+        queue = [(fs, 0) for fs in folder_strs]
+        visited: set[str] = set()
+        while queue:
+            fs, depth = queue.pop(0)
+            if fs in visited:
+                continue
+            visited.add(fs)
             try:
                 files = RLPy.RApplication.GetContentFilesInFolder(fs)
             except Exception:
@@ -1982,8 +2065,16 @@ def browse_content(folder_type: str = "cloth_upper") -> list[str]:
                 if (ext.startswith(".cc") or ext.startswith(".i")) and f not in seen:
                     seen.add(f)
                     results.append(f)
-                    if len(results) >= 200:
+                    if len(results) >= max_results:
                         return results
+            if depth < max_depth and hasattr(RLPy.RApplication, "GetContentFoldersInFolder"):
+                try:
+                    subs = RLPy.RApplication.GetContentFoldersInFolder(fs)
+                except Exception:
+                    subs = None
+                queue.extend((s, depth + 1) for s in (subs or []))
+        if not results:
+            results = _browse_disk(folder_strs, max_depth, max_results)
         return results
     except Exception as e:
         return [f"Error browsing content: {e}"]
@@ -4100,3 +4191,66 @@ def _auto_patch_server() -> None:
 
 
 _auto_patch_server()
+
+
+# --- Hot-reloadable extra routes (server.py consults these after /reload) ---
+# CLAUDE-NOTE (2026-10-24): add new tools HERE (EXTRA_ACTIONS + EXTRA_*_ROUTES) so they go live via
+# GET /reload (X-Reload-Token = CC5_RELOAD_SECRET set at CC5 launch) instead of a CC5 restart.
+
+def _v3(v) -> list[float]:
+    return [round(v.x, 3), round(v.y, 3), round(v.z, 3)]
+
+
+def _probe_camera() -> dict[str, Any]:
+    """Current camera world position + axes (rows = right, up, back) and key bone positions."""
+    cam = RLPy.RScene.GetCurrentCamera()
+    out: dict[str, Any] = {"camera": cam.GetName() if cam else None}
+    try:
+        wt = cam.WorldTransform()
+        out["cam_T"] = _v3(wt.T())
+        m = wt.R().ToRotationMatrix()
+        out["cam_R_rows"] = [_v3(m.GetRow(i)) for i in range(3)]
+    except Exception as e:
+        out["cam_err"] = str(e)
+    av = get_first_avatar()
+    if av:
+        try:
+            for b in av.GetSkeletonComponent().GetSkinBones():
+                if b.GetName() in ("CC_Base_Head", "CC_Base_R_Eye", "CC_Base_L_Eye", "CC_Base_Hip"):
+                    out[b.GetName()] = _v3(b.WorldTransform().T())
+        except Exception as e:
+            out["bone_err"] = str(e)
+    return out
+
+
+# CLAUDE-NOTE (2026-10-24): CC5 5.05 cannot aim the Preview Camera from Python: no
+# ECameraLocationType_*/SetCameraLocation (frame_camera presets fail), GetControl("Transform") and
+# every GetDataBlock key return None, and AlignTo(helper prop, any EAlignAxis) returns Failure even
+# with the helper placed correctly. What DOES move it: loading a .ccCam preset (it replaces the
+# preview camera). So close-ups use the shipped Headshot Ref presets; full-body views stay default.
+_HEADSHOT_DIR = os.environ.get("CC5_HEADSHOT_CAM_DIR", "F:/iCLONE/Reallusion Templates/Camera/Headshot Ref")
+
+
+def camera_preset(view: str = "face_left", body: str = "base") -> dict[str, Any]:
+    """Apply a shipped headshot camera preset: view face_left|face_right, body base|male|female."""
+    side = {"face_left": "L", "face_right": "R"}.get((view or "").lower())
+    kind = {"base": "Base", "male": "Male", "female": "Female"}.get((body or "").lower())
+    if not side or not kind:
+        return {"success": False, "error": "view = face_left|face_right, body = base|male|female"}
+    path = os.path.join(_HEADSHOT_DIR, f"Ref Cam {kind} {side}.ccCam")
+    if not os.path.exists(path):
+        return {"success": False, "error": f"Preset not found: {path}"}
+    ok = RLPy.RFileIO.LoadFile(path) == RLPy.RStatus.Success
+    if hasattr(RLPy.RGlobal, "ForceViewportUpdate"):
+        RLPy.RGlobal.ForceViewportUpdate()
+    cam = RLPy.RScene.GetCurrentCamera()
+    return {"success": ok, "preset": path, "camera": cam.GetName() if cam else None,
+            "cam_T": _v3(cam.WorldTransform().T()) if cam else None}
+
+
+EXTRA_ACTIONS: dict[str, Any] = {
+    "probe_camera": lambda p: _probe_camera(),
+    "camera_preset": lambda p: camera_preset(str(p.get("view", "face_left")), str(p.get("body", "base"))),
+}
+EXTRA_GET_ROUTES: dict[str, str] = {"/probe/camera": "probe_camera"}
+EXTRA_POST_ROUTES: dict[str, str] = {"/camera/preset": "camera_preset"}

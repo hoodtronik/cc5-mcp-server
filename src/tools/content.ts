@@ -71,12 +71,24 @@ export function registerContentTools(server: McpServer, bridge: CC5Bridge) {
   );
 
   server.tool(
+    "content_folders",
+    "Diagnostic for browse_content: shows the raw CC5 content folder strings ('$/...' virtual and the custom disk folder), their file counts and subfolders for one EContentRootFolder name (e.g. Coats, Character, Shoes).",
+    { folder_type: z.string().max(64).describe("EContentRootFolder suffix, e.g. Coats, Character, Shoes, Upper") },
+    async ({ folder_type }) => bridgeCall(
+      () => bridge.contentFolders(folder_type),
+      (r) => JSON.stringify(r, null, 2),
+    )
+  );
+
+  server.tool(
     "browse_content",
-    "Browse available CC5 content files by category. Returns file paths that can be loaded with load_asset. Wearables: cloth_upper, cloth_lower, cloth, shoes, accessory_head, accessory_body. Scene/animation: pose, motion, expression, props, light, camera, character (pose/motion may be empty on a base install without content packs).",
+    "Browse available CC5 content files by category. Returns file paths that can be loaded with load_asset. Wearables: cloth_upper, cloth_lower, cloth, shoes, accessory_head, accessory_body. Garment library: coats, shirts, pants, skirts, gloves, underwear, cloth_others. Scene/animation: pose, motion, expression, props, light, camera, character. Also skin, persona, mixer_full_character. Searches subfolders.",
     {
       folder_type: z.enum([
         "cloth_upper", "cloth_lower", "cloth", "shoes", "accessory_head", "accessory_body",
         "pose", "motion", "expression", "props", "light", "camera", "character",
+        "coats", "shirts", "pants", "skirts", "gloves", "underwear", "cloth_others",
+        "skin", "persona", "mixer_full_character",
       ]).default("cloth_upper")
         .describe("Content category. Wearables: cloth_upper/cloth_lower/cloth/shoes/accessory_head/accessory_body. Scene & animation: pose/motion/expression/props/light/camera/character. Load a returned path with load_asset."),
     },
